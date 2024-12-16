@@ -79,7 +79,6 @@ def api_get_response():
     user_query_preprocessed = preprocess_text(user_query)
     user_query_tfidf = vectorizer.transform([user_query_preprocessed])
     
-    # Predict intent using Logistic Regression (you can change this to `rf_model` if desired)
     predicted_intent = lr_model.predict(user_query_tfidf)[0]
     
     # Retrieve the corresponding response
