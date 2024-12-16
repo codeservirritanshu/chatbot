@@ -27,7 +27,6 @@ df.drop(columns=['Chips'], axis=1, inplace=True)
 intents_summary = df.groupby('Intent').size()
 print("Number of examples per intent:")
 print(intents_summary)
-
 # Preprocess the queries
 def preprocess_text(text):
     # Lowercase
