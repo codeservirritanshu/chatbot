@@ -9,6 +9,7 @@ from nltk.corpus import stopwords
 import nltk
 from flask_cors import CORS
 from flask import Flask, request, jsonify
+from waitress import serve  # Import Waitress
 
 # Initialize the Flask application
 app = Flask(__name__)
@@ -22,7 +23,7 @@ except LookupError:
 
 # Load the dataset
 try:
-    df = pd.read_excel(r"generated_chatbot_data.xlsx")  # Make sure the file is in the correct path
+    df = pd.read_excel(r"generated_chatbot_data.xlsx")  # Ensure the file is in the correct path
 except Exception as e:
     print(f"Error loading the dataset: {e}")
     raise
@@ -67,7 +68,7 @@ rf_y_pred = rf_model.predict(X_test_vec)
 print("Random Forest Accuracy:", accuracy_score(y_test, rf_y_pred))
 
 # Train LogisticRegression
-lr_model = LogisticRegression()
+lr_model = LogisticRegression(max_iter=200)  # Increased max_iter to handle convergence
 lr_model.fit(X_train_vec, y_train)
 
 # Evaluate LogisticRegression
@@ -95,5 +96,6 @@ def api_get_response():
     
     return jsonify({'response': response})
 
+# Run the app using Waitress
 if __name__ == '__main__':
-    app.run(debug=True)
+    serve(app, host='0.0.0.0', port=8080)  # Specify host and port for Waitress
