@@ -9,10 +9,10 @@ from nltk.corpus import stopwords
 import nltk
 from flask_cors import CORS
 from flask import Flask, request, jsonify
-from waitress import serve  # Import Waitress
+from waitress import serve  
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)  
 
 try:
     nltk.data.find('corpora/stopwords')
@@ -20,7 +20,7 @@ except LookupError:
     nltk.download('stopwords')
 
 try:
-    df = pd.read_excel(r"generated_chatbot_data.xlsx")  # Ensure the file is in the correct path
+    df = pd.read_excel(r"generated_chatbot_data.xlsx") 
 except Exception as e:
     print(f"Error loading the dataset: {e}")
     raise
@@ -32,8 +32,8 @@ print("Number of examples per intent:")
 print(intents_summary)
 
 def preprocess_text(text):
-    text = text.lower()  # Convert to lowercase
-    text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
+    text = text.lower()  
+    text = re.sub(r'[^\w\s]', '', text) 
     stop_words = set(stopwords.words('english'))
     text = ' '.join(word for word in text.split() if word not in stop_words)
     return text
@@ -55,27 +55,21 @@ rf_model.fit(X_train_vec, y_train)
 rf_y_pred = rf_model.predict(X_test_vec)
 print("Random Forest Accuracy:", accuracy_score(y_test, rf_y_pred))
 
-# Train LogisticRegression
-lr_model = LogisticRegression(max_iter=200)  # Increased max_iter to handle convergence
+lr_model = LogisticRegression(max_iter=200) 
 lr_model.fit(X_train_vec, y_train)
 
-# Evaluate LogisticRegression
 lr_y_pred = lr_model.predict(X_test_vec)
 print("Logistic Regression Accuracy:", accuracy_score(y_test, lr_y_pred))
 
-# Define a Flask API route for chat responses
 @app.route('/get_response', methods=['POST'])
 def api_get_response():
     user_query = request.json['query']
     
-    # Preprocess the user query
     user_query_preprocessed = preprocess_text(user_query)
     user_query_tfidf = vectorizer.transform([user_query_preprocessed])
     
-    # Choose which model to use (default is LogisticRegression)
     predicted_intent = lr_model.predict(user_query_tfidf)[0]
     
-    # Retrieve the corresponding response
     response_row = df[df['Intent'] == predicted_intent]
     if not response_row.empty:
         response = response_row['Response'].iloc[0]
@@ -84,6 +78,5 @@ def api_get_response():
     
     return jsonify({'response': response})
 
-# Run the app using Waitress
 if __name__ == '__main__':
-    serve(app, host='0.0.0.0', port=8080)  # Specify host and port for Waitress
+    serve(app, host='0.0.0.0', port=8080) 
