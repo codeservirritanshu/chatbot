@@ -80,7 +80,7 @@ label_encoder = LabelEncoder()
 y_train_enc = label_encoder.fit_transform(y_train)
 y_test_enc = label_encoder.transform(y_test)
 
-# Best XGBoost model from tuning
+# XGBoost model
 xgb_model = XGBClassifier(
     colsample_bytree=0.8,
     learning_rate=0.2,
@@ -94,18 +94,23 @@ xgb_model.fit(X_train_svd, y_train_enc)
 # Evaluate
 xgb_preds_enc = xgb_model.predict(X_test_svd)
 xgb_preds = label_encoder.inverse_transform(xgb_preds_enc)
-
-# Print Accuracy Only
 print("XGBoost Accuracy:", accuracy_score(y_test, xgb_preds))
 
 # Use the model for deployment
 deployed_model = xgb_model
 
-@app.route('/get_response', methods=['POST'])
-def api_get_response():
-    user_query = request.json.get('query', '')
+# Helper to detect low-content input
+def is_meaningless(tfidf_vector):
+    return tfidf_vector.nnz == 0
+
+# Unified response generator
+def generate_bot_response(user_query):
     user_query_preprocessed = preprocess_text(user_query)
     user_query_tfidf = vectorizer.transform([user_query_preprocessed])
+
+    if is_meaningless(user_query_tfidf):
+        return "I'm sorry, I couldn't understand that. Could you rephrase?"
+
     user_query_svd = svd.transform(user_query_tfidf)
 
     probs = deployed_model.predict_proba(user_query_svd)[0]
@@ -113,16 +118,31 @@ def api_get_response():
     predicted_label_enc = np.argmax(probs)
     predicted_intent = label_encoder.inverse_transform([predicted_label_enc])[0]
 
-    if confidence < 0.6:
-        response = "I'm not sure I understand. Can you rephrase your question?"
+    if confidence < 0.8:
+        return "I'm not sure I understand. Can you rephrase your question?"
     else:
         response_row = df[df['Intent'] == predicted_intent]
         if not response_row.empty:
-            response = response_row['Response'].iloc[0]
+            return response_row['Response'].iloc[0]
         else:
-            response = "Sorry, I couldn't find a proper response for that."
+            return "Sorry, I couldn't find a proper response for that."
 
+@app.route('/get_response', methods=['POST'])
+def api_get_response():
+    user_query = request.json.get('query', '')
+    response = generate_bot_response(user_query)
     return jsonify({'response': response})
+
+def chat_in_terminal():
+    print("Chatbot is ready! Type your query (type 'exit' to quit):")
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ['exit', 'quit']:
+            print("Goodbye!")
+            break
+        response = generate_bot_response(user_input)
+        print("Bot:", response)
+
 
 if __name__ == '__main__':
     serve(app, host='0.0.0.0', port=8080)
