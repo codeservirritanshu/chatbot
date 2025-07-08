@@ -1,82 +1,117 @@
 import pandas as pd
 import re
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
-from nltk.corpus import stopwords
+import random
 import nltk
-from flask_cors import CORS
 from flask import Flask, request, jsonify
-from waitress import serve  
+from nltk.corpus import stopwords
+from sentence_transformers import SentenceTransformer, util
+from waitress import serve
+from tqdm import tqdm
 
-app = Flask(__name__)
-CORS(app)  
-
+# Ensure stopwords are available
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
 
-try:
-    df = pd.read_excel(r"generated_chatbot_data.xlsx") 
-except Exception as e:
-    print(f"Error loading the dataset: {e}")
-    raise
+stop_words = set(stopwords.words('english'))
 
-df.drop(columns=['Chips'], axis=1, errors='ignore', inplace=True)
+# Clean text function
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\d+', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return ' '.join([word for word in text.split() if word not in stop_words])
 
-intents_summary = df.groupby('Intent').size()
-print("Number of examples per intent:")
-print(intents_summary)
+# Load and clean dataset
+df = pd.read_excel('Chatbot_dataset.xlsx')
+df = df[~df['Intent'].str.startswith('Generated_Intent')]
+df['Intent'] = df['Intent'].replace({
+    r'^Greeting\d*$': 'Greeting',
+    r'^Welcome\d*$': 'Welcome'
+}, regex=True)
+df['CleanedQuery'] = df['Query'].apply(clean_text)
 
-def preprocess_text(text):
-    text = text.lower()  
-    text = re.sub(r'[^\w\s]', '', text) 
-    stop_words = set(stopwords.words('english'))
-    text = ' '.join(word for word in text.split() if word not in stop_words)
-    return text
+# Use only one response per intent
+responses = df.groupby('Intent')['Response'].first().to_dict()
 
-df['Query'] = df['Query'].apply(preprocess_text)
+# Load Sentence-BERT (PyTorch only)
+print("🔍 Loading Sentence-BERT (MiniLM)...")
+model = SentenceTransformer('all-MiniLM-L6-v2')  # Small, fast, contextual
+query_list = df['CleanedQuery'].tolist()
+intent_list = df['Intent'].tolist()
+query_embeddings = model.encode(query_list, convert_to_tensor=True)
 
-X = df['Query']
-y = df['Intent']
+# -----------------------------
+# ✅ Evaluation (Top-1 Accuracy)
+# -----------------------------
+print("\n🔍 Evaluating model with Top-1 accuracy...")
+correct = 0
+total = len(query_list)
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+for i in tqdm(range(total), desc="Evaluating"):
+    embedding = model.encode(query_list[i], convert_to_tensor=True)
+    scores = util.cos_sim(embedding, query_embeddings)[0]
+    best_idx = scores.argmax().item()
+    if intent_list[best_idx] == intent_list[i]:
+        correct += 1
 
-vectorizer = TfidfVectorizer()
-X_train_vec = vectorizer.fit_transform(X_train)
-X_test_vec = vectorizer.transform(X_test)
+accuracy = correct / total
+print(f"\n✅ Semantic Top-1 Accuracy: {accuracy:.2%}\n")
 
-rf_model = RandomForestClassifier()
-rf_model.fit(X_train_vec, y_train)
+# -----------------------------
+# Flask API
+# -----------------------------
+app = Flask(__name__)
 
-rf_y_pred = rf_model.predict(X_test_vec)
-print("Random Forest Accuracy:", accuracy_score(y_test, rf_y_pred))
+@app.route('/predict', methods=['POST'])
+def predict():
+    user_query = request.json.get('query', '')
+    if not user_query.strip():
+        return jsonify({'error': 'Query is empty'}), 400
 
-lr_model = LogisticRegression(max_iter=200) 
-lr_model.fit(X_train_vec, y_train)
+    cleaned = clean_text(user_query)
+    if not cleaned:
+        return jsonify({'intent': 'unknown', 'response': "Please provide a meaningful question."})
 
-lr_y_pred = lr_model.predict(X_test_vec)
-print("Logistic Regression Accuracy:", accuracy_score(y_test, lr_y_pred))
+    user_embedding = model.encode(cleaned, convert_to_tensor=True)
+    scores = util.cos_sim(user_embedding, query_embeddings)[0]
+    best_idx = scores.argmax().item()
+    intent = intent_list[best_idx]
+    response = responses.get(intent, "I'm still learning. Could you rephrase?")
+    return jsonify({'intent': intent, 'response': response})
 
-@app.route('/get_response', methods=['POST'])
-def api_get_response():
-    user_query = request.json['query']
-    
-    user_query_preprocessed = preprocess_text(user_query)
-    user_query_tfidf = vectorizer.transform([user_query_preprocessed])
-    
-    predicted_intent = lr_model.predict(user_query_tfidf)[0]
-    
-    response_row = df[df['Intent'] == predicted_intent]
-    if not response_row.empty:
-        response = response_row['Response'].iloc[0]
-    else:
-        response = "I'm sorry, I didn't understand that. Could you rephrase?"
-    
-    return jsonify({'response': response})
+# -----------------------------
+# Terminal Chat Mode
+# -----------------------------
+def chat_in_terminal():
+    print("\n🤖 Chatbot (BERT-powered, no TensorFlow) — type 'exit' or 'sample'\n")
+    while True:
+        user_input = input("🗨️  You: ").strip()
+        if user_input.lower() == 'exit':
+            print("👋 Goodbye!")
+            break
+        elif user_input.lower() == 'sample':
+            print("\n📋 Sample Q&A:")
+            for _, row in df.sample(5).iterrows():
+                print(f"\n🔹 Q: {row['Query']}\n   → 🤖 A: {row['Response']}")
+            continue
 
+        cleaned = clean_text(user_input)
+        if not cleaned:
+            print("⚠️  Please ask a valid question.")
+            continue
+
+        user_embedding = model.encode(cleaned, convert_to_tensor=True)
+        scores = util.cos_sim(user_embedding, query_embeddings)[0]
+        best_idx = scores.argmax().item()
+        intent = intent_list[best_idx]
+        response = responses.get(intent, "I'm still learning. Could you rephrase?")
+        print(f"🤖 {response}")
+
+# -----------------------------
+# Launcher
+# -----------------------------
 if __name__ == '__main__':
     serve(app, host='0.0.0.0', port=8080) 
